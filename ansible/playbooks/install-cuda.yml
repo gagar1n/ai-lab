@@ -1,0 +1,84 @@
+---
+- name: Install NVIDIA CUDA Toolkit
+  hosts: localhost
+  become: false
+
+  vars:
+    cuda_version: "13"
+    ubuntu_version: "ubuntu2404"
+
+  tasks:
+    - name: Check if NVIDIA GPU is present
+      ansible.builtin.shell:
+        cmd: lspci | grep -i nvidia
+      register: nvidia_gpu_check
+      changed_when: false
+      failed_when: false
+
+    - name: Display GPU detection result
+      ansible.builtin.debug:
+        msg: "{{ 'NVIDIA GPU detected, proceeding with CUDA installation.' if nvidia_gpu_check.rc == 0 else 'No NVIDIA GPU detected, skipping CUDA installation.' }}"
+
+    - name: Install required dependencies
+      ansible.builtin.apt:
+        name:
+          - gnupg
+          - software-properties-common
+        state: present
+      become: true
+      when: nvidia_gpu_check.rc == 0
+
+    - name: Add NVIDIA CUDA repository key
+      ansible.builtin.apt_key:
+        url: "https://developer.download.nvidia.com/compute/cuda/repos/{{ ubuntu_version }}/x86_64/3bf863cc.pub"
+        state: present
+      become: true
+      when: nvidia_gpu_check.rc == 0
+
+    - name: Add NVIDIA CUDA repository
+      ansible.builtin.apt_repository:
+        repo: "deb https://developer.download.nvidia.com/compute/cuda/repos/{{ ubuntu_version }}/x86_64/ /"
+        state: present
+        filename: cuda
+      become: true
+      when: nvidia_gpu_check.rc == 0
+
+    - name: Update apt cache after adding CUDA repo
+      ansible.builtin.apt:
+        update_cache: yes
+      become: true
+      when: nvidia_gpu_check.rc == 0
+
+    - name: Check if NVIDIA drivers are already installed
+      ansible.builtin.shell:
+        cmd: dpkg -l | grep -E 'nvidia-driver-[0-9]+|nvidia-kernel-common'
+      register: nvidia_driver_check
+      changed_when: false
+      failed_when: false
+      when: nvidia_gpu_check.rc == 0
+
+    - name: Install CUDA toolkit
+      ansible.builtin.apt:
+        name:
+          - "cuda-toolkit-{{ cuda_version }}"
+        state: present
+      become: true
+      when: nvidia_gpu_check.rc == 0
+
+    - name: Install NVIDIA open drivers (if no drivers present)
+      ansible.builtin.apt:
+        name:
+          - nvidia-open
+        state: present
+      become: true
+      when: nvidia_gpu_check.rc == 0 and nvidia_driver_check.rc != 0
+
+    - name: Add CUDA to PATH in bashrc
+      ansible.builtin.lineinfile:
+        path: "{{ ansible_facts['env']['HOME'] }}/.bashrc"
+        line: "{{ item }}"
+        create: yes
+      loop:
+        - 'export PATH=/usr/local/cuda/bin:$PATH'
+        - 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH'
+      when: nvidia_gpu_check.rc == 0
