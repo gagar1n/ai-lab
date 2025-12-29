@@ -1,0 +1,60 @@
+---
+- name: Setup AI/ML Development Environment
+  hosts: localhost
+  become: false
+
+  vars:
+    # Python version for ML environment
+    python_version: "3.11"
+    
+    # Virtual environment path
+    venv_path: "{{ playbook_dir }}/../venv"
+    
+    # ML/AI packages to install
+    ml_packages:
+      - numpy
+      - pandas
+      - scikit-learn
+      - torch
+      - tensorflow
+      - jupyter
+      - matplotlib
+      - seaborn
+
+  tasks:
+    - name: Display system information
+      ansible.builtin.debug:
+        msg: "Setting up AI/ML environment on {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}"
+
+    - name: Install system dependencies
+      ansible.builtin.apt:
+        name:
+          - python3-pip
+          - python3-venv
+          - build-essential
+          - curl
+        state: present
+      become: true
+
+    - name: Check if uv is installed
+      ansible.builtin.command:
+        cmd: which uv
+      register: uv_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install uv
+      ansible.builtin.shell:
+        cmd: curl -LsSf https://astral.sh/uv/install.sh | sh
+      when: uv_check.rc != 0
+
+    - name: Create virtual environment with uv
+      ansible.builtin.command:
+        cmd: "{{ ansible_facts['env']['HOME'] }}/.local/bin/uv venv {{ venv_path }}"
+        creates: "{{ venv_path }}/bin/python"
+
+    - name: Install ML packages with uv
+      ansible.builtin.command:
+        cmd: "{{ ansible_facts['env']['HOME'] }}/.local/bin/uv pip install --python {{ venv_path }}/bin/python {{ ml_packages | join(' ') }}"
+      register: uv_install
+      changed_when: "'Installed' in uv_install.stdout or 'Updated' in uv_install.stdout"
