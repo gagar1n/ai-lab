@@ -69,6 +69,25 @@
         creates: "{{ ansible_facts['env']['HOME'] }}/.conda"
       register: conda_init
 
+    # Configure conda to use only conda-forge channel to avoid Anaconda ToS requirements
+    # Reference: https://conda-forge.org/docs/user/introduction/#how-can-i-install-packages-from-conda-forge
+    - name: Add conda-forge as default channel
+      ansible.builtin.command:
+        cmd: "{{ miniconda_path }}/bin/conda config --add channels conda-forge"
+      changed_when: false
+
+    - name: Set conda-forge as highest priority channel
+      ansible.builtin.command:
+        cmd: "{{ miniconda_path }}/bin/conda config --set channel_priority strict"
+      changed_when: false
+
+    - name: Remove default Anaconda channels to avoid ToS requirement
+      ansible.builtin.command:
+        cmd: "{{ miniconda_path }}/bin/conda config --remove channels defaults"
+      register: remove_defaults
+      changed_when: false
+      failed_when: false
+
     - name: Check if conda environment exists
       ansible.builtin.shell:
         cmd: "{{ miniconda_path }}/bin/conda env list | grep -w {{ conda_env_name }}"
@@ -78,7 +97,7 @@
 
     - name: Create conda environment with Python {{ python_version }}
       ansible.builtin.command:
-        cmd: "{{ miniconda_path }}/bin/conda create -n {{ conda_env_name }} python={{ python_version }} -y"
+        cmd: "{{ miniconda_path }}/bin/conda create -n {{ conda_env_name }} -c conda-forge python={{ python_version }} -y"
       when: conda_env_check.rc != 0
 
     - name: Install conda packages from conda-forge
