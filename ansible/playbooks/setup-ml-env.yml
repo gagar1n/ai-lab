@@ -4,22 +4,26 @@
   become: false
 
   vars:
-    # Python version for ML environment
-    python_version: "3.11"
-    
-    # Virtual environment path
-    venv_path: "{{ playbook_dir }}/../venv"
-    
-    # ML/AI packages to install
-    ml_packages:
+    python_version: "3.12"
+
+    miniconda_path: "{{ ansible_facts['env']['HOME'] }}/miniconda3"
+    # Source: https://repo.anaconda.com/miniconda/
+    miniconda_installer_url: "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+    conda_env_name: "ml-env"
+
+    conda_packages:
       - numpy
       - pandas
       - scikit-learn
-      - torch
-      - tensorflow
-      - jupyter
       - matplotlib
       - seaborn
+      - jupyter
+
+    pip_packages:
+      - torch
+      - tensorflow
+      - catboost
+      - xgboost
 
   tasks:
     - name: Display system information
@@ -29,32 +33,90 @@
     - name: Install system dependencies
       ansible.builtin.apt:
         name:
-          - python3-pip
-          - python3-venv
           - build-essential
           - curl
+          - wget
         state: present
       become: true
 
-    - name: Check if uv is installed
+    - name: Check if Miniconda is already installed
+      ansible.builtin.stat:
+        path: "{{ miniconda_path }}/bin/conda"
+      register: miniconda_check
+
+    - name: Download Miniconda installer
+      ansible.builtin.get_url:
+        url: "{{ miniconda_installer_url }}"
+        dest: "/tmp/miniconda_installer.sh"
+        mode: "0755"
+      when: not miniconda_check.stat.exists
+
+    - name: Install Miniconda
       ansible.builtin.command:
-        cmd: which uv
-      register: uv_check
+        cmd: "/tmp/miniconda_installer.sh -b -p {{ miniconda_path }}"
+        creates: "{{ miniconda_path }}/bin/conda"
+      when: not miniconda_check.stat.exists
+
+    - name: Remove Miniconda installer
+      ansible.builtin.file:
+        path: "/tmp/miniconda_installer.sh"
+        state: absent
+
+    - name: Initialize conda for bash
+      ansible.builtin.shell:
+        cmd: "{{ miniconda_path }}/bin/conda init bash"
+      args:
+        creates: "{{ ansible_facts['env']['HOME'] }}/.conda"
+      register: conda_init
+
+    # Configure conda to use only conda-forge channel to avoid Anaconda ToS requirements
+    # Reference: https://conda-forge.org/docs/user/introduction/#how-can-i-install-packages-from-conda-forge
+    - name: Add conda-forge as default channel
+      ansible.builtin.command:
+        cmd: "{{ miniconda_path }}/bin/conda config --add channels conda-forge"
+      changed_when: false
+
+    - name: Set conda-forge as highest priority channel
+      ansible.builtin.command:
+        cmd: "{{ miniconda_path }}/bin/conda config --set channel_priority strict"
+      changed_when: false
+
+    - name: Remove default Anaconda channels to avoid ToS requirement
+      ansible.builtin.command:
+        cmd: "{{ miniconda_path }}/bin/conda config --remove channels defaults"
+      register: remove_defaults
       changed_when: false
       failed_when: false
 
-    - name: Install uv
+    - name: Check if conda environment exists
       ansible.builtin.shell:
-        cmd: curl -LsSf https://astral.sh/uv/install.sh | sh
-      when: uv_check.rc != 0
+        cmd: "{{ miniconda_path }}/bin/conda env list | grep -w {{ conda_env_name }}"
+      register: conda_env_check
+      changed_when: false
+      failed_when: false
 
-    - name: Create virtual environment with uv
+    - name: Create conda environment with Python {{ python_version }}
       ansible.builtin.command:
-        cmd: "{{ ansible_facts['env']['HOME'] }}/.local/bin/uv venv {{ venv_path }}"
-        creates: "{{ venv_path }}/bin/python"
+        cmd: "{{ miniconda_path }}/bin/conda create -n {{ conda_env_name }} --override-channels -c conda-forge python={{ python_version }} -y"
+      when: conda_env_check.rc != 0
 
-    - name: Install ML packages with uv
-      ansible.builtin.command:
-        cmd: "{{ ansible_facts['env']['HOME'] }}/.local/bin/uv pip install --python {{ venv_path }}/bin/python {{ ml_packages | join(' ') }}"
-      register: uv_install
-      changed_when: "'Installed' in uv_install.stdout or 'Updated' in uv_install.stdout"
+    - name: Install conda packages from conda-forge
+      ansible.builtin.shell:
+        cmd: "{{ miniconda_path }}/bin/conda install -n {{ conda_env_name }} --override-channels -c conda-forge {{ conda_packages | join(' ') }} -y"
+      register: conda_install
+      changed_when: "'All requested packages already installed' not in conda_install.stdout"
+
+    - name: Install pip packages in conda environment
+      ansible.builtin.shell:
+        cmd: "{{ miniconda_path }}/envs/{{ conda_env_name }}/bin/pip install {{ pip_packages | join(' ') }}"
+      register: pip_install
+      changed_when: "'Successfully installed' in pip_install.stdout"
+
+    - name: Display activation instructions
+      ansible.builtin.debug:
+        msg: |
+          Miniconda environment setup complete.
+          To activate the environment, run:
+            conda activate {{ conda_env_name }}
+          Or source your .bashrc and then activate:
+            source ~/.bashrc && conda activate {{ conda_env_name }}
